@@ -1,0 +1,13 @@
+* basic warrior rotation (just data struct)
+* basic validator for struct
+* potency calculator for struct
+* pretty html printing of rotations
+* for preset ogcds, determine optimal gcds
+* for X length of fight, determine best cooldown usage
+* insert group buff ogcds as well
+
+From there:
+* monk next (probably), then other classes
+* consider multiple mobs
+* consider boss factors (e.g. totally invulnerable, dots ticking but not targetable, targetable but invulnerable, etc)
+* consider real values (ss, crit, det, and get real damage values)
