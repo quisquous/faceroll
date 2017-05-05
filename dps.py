@@ -22,7 +22,8 @@ class Skill(object):
   FELL_CLEAVE = 18
   DECIMATE = 19
   TOMAHAWK = 20
-  SUPRAMAX_POTION_OF_STRENGTH_HQ = 21
+  VENGEANCE = 21
+  SUPRAMAX_POTION_OF_STRENGTH_HQ = 30
 
 
 skill_list = [
@@ -171,6 +172,13 @@ skill_list = [
     'potency': 130,
   },
   {
+    'id': Skill.VENGEANCE,
+    'name': 'Vengeance',
+    'xivdb': ['action', 44],
+    'gcd': 0,
+    'eduration': 15,
+  },
+  {
     'id': Skill.SUPRAMAX_POTION_OF_STRENGTH_HQ,
     'name': 'Supramax-Potion of Strength HQ',
     'xivdb': ['item', 16716],
@@ -183,6 +191,7 @@ skills = dict((x['id'], x) for x in skill_list)
 Action = collections.namedtuple('Action', 'id time')
 
 timeline = [
+  Action(Skill.DELIVERANCE, -10),
   Action(1, 0.0),
   Action(2, 2.5),
   Action(3, 5.0),
@@ -191,18 +200,31 @@ timeline = [
   Action(6, 12.5),
 ]
 
-# Track currently active
+# Track currently active effects.
+# TODO probably need one of these per target (and self)
 class StatusEffects(object):
   def __init__(self):
     # map of skill id => ending time (none for infinity)
-    _effects = {}
+    self._effects = {}
 
   def add_effect(self, id, time, dur):
-    pass
+    # TODO not all effects replace
+    # TODO some effects collide
+    if dur is None:
+      self._effects[id] = None
+    else:
+      self._effects[id] = time + dur
+
+  def remove_effect(self, id):
+    self._effects.pop(id)
 
   def has_effect(self, id, time):
-    if not id in _effects:
+    if not id in self._effects:
       return False
+    end_time = self._effects[id]
+    if end_time is None:
+      return True
+    return time <= end_time
 
 
 # Combo tracker is a graph where every transition goes to the state
@@ -248,11 +270,21 @@ class ComboTracker(object):
     self.current_node = None
     return False
 
+  # TODO combo needs to keep track of time too
   def would_continue_combo(self, id):
     return id in self.graph[self.current_node].trans
 
 
 class WarriorState(object):
+  stack_users = [
+    Skill.FELL_CLEAVE,
+    Skill.DECIMATE,
+    Skill.UNCHAINED,
+    Skill.INNER_BEAST,
+    Skill.STEEL_CYCLONE
+  ]
+
+
   def __init__(self):
     self.stacks = 0
     self.status = StatusEffects()
@@ -272,19 +304,53 @@ class WarriorState(object):
 
   def apply_skill_and_get_damage(self, id, time):
     damage = self.get_damage(id, time)
-    print "damage: %d: %d" % (id, damage)
+    print "damage: %s: %.1f" % (skills[id]['name'], damage)
     self.apply_skill(id, time)
     return damage
 
   def get_damage(self, id, time):
-    # TODO combo needs to keep track of time too
-    if self.combo.would_continue_combo(id):
-      return skills[id]['cpotency']
-    return skills[id]['potency']
+    if not 'potency' in skills[id]:
+      return 0
+    potency = (skills[id]['cpotency']
+        if self.combo.would_continue_combo(id) else skills[id]['potency'])
+
+    # TODO Not convinced that "damage" and "attack power" mean different
+    # things here. http://www.eonet.ne.jp/~versatile/ku-so/ff14dps.html
+    # suggests that they are equivalent in terms of final damage.
+
+    # damage by 20%
+    maim_mult = 1.2 if self.status.has_effect(Skill.MAIM, time) else 1
+    # attack power by 50%
+    berserk_mult = 1.5 if self.status.has_effect(Skill.BERSERK, time) else 1
+
+    # TODO this is probably not right either
+    damage = potency * maim_mult * berserk_mult
+
+    # crit chance
+    crit_chance = 0.05
+    if self.status.has_effect(Skill.INTERNAL_RELEASE, time):
+      crit_chance += 0.1
+    if self.status.has_effect(Skill.DELIVERANCE, time):
+      crit_chance += 0.02 * self.stacks
+
+    # TODO make this scale with character stats
+    crit_sev = 1.5
+
+    # average in crit damage
+    final = crit_chance * damage * crit_sev + (1 - crit_chance) * damage
+    return final
 
   def apply_skill(self, id, time):
-    is_combo = self.combo.apply_skill(id)
-    if is_combo:
+    if skills[id]['gcd']:
+      if id in self.stack_users:
+        self.stacks = 0
+      is_combo = self.combo.apply_skill(id)
+      if not is_combo:
+        return
+
+      if id != Skill.HEAVY_SWING:
+        self.stacks += 1
+
       if id == Skill.MAIM:
         self.status.add_effect(Skill.MAIM, time,
             skills[Skill.MAIM]['eduration'])
@@ -294,6 +360,18 @@ class WarriorState(object):
       if id == Skill.STORMS_PATH:
         self.status.add_effect(Skill.MAIM, time,
             skills[Skill.STORMS_PATH]['eduration'])
+    else:
+      if id in [Skill.RAW_INTUITION, Skill.VENGEANCE, Skill.BERSERK]:
+        self.stacks += 1
+      elif id == Skill.INFURIATE:
+        self.stacks = 5
+      self.stacks = min(self.stacks, 5)
+
+      if id in [Skill.DELIVERANCE, Skill.DEFIANCE]:
+        if self.status.has_effect(id, time):
+          self.status.remove_effect(id)
+        else:
+          self.status.add_effect(id, time, None)
 
 
 class PotencyCalculator(object):
