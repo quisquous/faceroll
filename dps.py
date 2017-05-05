@@ -1,4 +1,5 @@
 import collections
+import math
 
 #enum
 class Skill(object):
@@ -45,7 +46,7 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 190,
-    'eduration': 24,
+    'duration': 24,
   },
   {
     'id': Skill.STORMS_EYE,
@@ -54,7 +55,7 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 270,
-    'eduration': 20,
+    'duration': 20,
   },
   {
     'id': Skill.STORMS_PATH,
@@ -63,7 +64,7 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 250,
-    'eduration': 20,
+    'duration': 20,
   },
   {
     'id': Skill.SKULL_SUNDER,
@@ -87,7 +88,7 @@ skill_list = [
     'xivdb': ['action', 33],
     'gcd': 1,
     'potency': 100,
-    'dotlength': 30,
+    'duration': 30,
     'dotpotency': 20,
   },
   {
@@ -114,7 +115,7 @@ skill_list = [
     'name': 'Berserk',
     'xivdb': ['action', 38],
     'gcd': 0,
-    'eduration': 20,
+    'duration': 20,
   },
   {
     'id': Skill.INFURIATE,
@@ -133,7 +134,7 @@ skill_list = [
     'name': 'Internal Release',
     'xivdb': ['action', 59],
     'gcd': 0,
-    'eduration': 15,
+    'duration': 15,
   },
   {
     'id': Skill.INNER_BEAST,
@@ -181,7 +182,7 @@ skill_list = [
     'name': 'Vengeance',
     'xivdb': ['action', 44],
     'gcd': 0,
-    'eduration': 15,
+    'duration': 15,
   },
   {
     'id': Skill.SUPRAMAX_POTION_OF_STRENGTH_HQ,
@@ -194,7 +195,7 @@ skill_list = [
     'name': 'Trick Attack',
     'xivdb': ['action', 2258],
     'gcd': 0,
-    'eduration': 10,
+    'duration': 10,
   },
   {
     # TODO This isn't really a skill.
@@ -202,14 +203,14 @@ skill_list = [
     'name': 'Hypercharge',
     'xivdb': ['action', 2885],
     'gcd': 0,
-    'eduration': 20,
+    'duration': 20,
   },
   {
     'id': Skill.BATTLE_LITANY,
     'name': 'Battle Litany',
     'xivdb': ['action', 3557],
     'gcd': 0,
-    'eduration': 20,
+    'duration': 20,
   },
 ]
 
@@ -319,6 +320,9 @@ class ComboTracker(object):
     return id in self.graph[self.current_node].trans
 
 
+Damage = collections.namedtuple('Damage', 'damage crit_chance crit_sev')
+
+
 class WarriorState(object):
   stack_users = [
     Skill.FELL_CLEAVE,
@@ -347,18 +351,40 @@ class WarriorState(object):
 
     self.combo = ComboTracker(self.warrior_combos, self.warrior_combo_ignore)
 
+  def crit_chance(self, time):
+    crit_chance = self.character.crit_chance()
+    if self.status.has_effect(Skill.INTERNAL_RELEASE, time):
+      crit_chance += 0.1
+    if self.status.has_effect(Skill.DELIVERANCE, time):
+      crit_chance += 0.02 * self.stacks
+    if self.status.has_effect(Skill.BATTLE_LITANY, time):
+      crit_chance += 0.15
+    return crit_chance
+
+  # Returns direct and dot and crit info so that the caller can calculate
+  # ranges or averages as needed.
   def apply_skill_and_get_damage(self, id, time):
-    damage = self.get_damage(id, time)
-    print "damage: %s: %d" % (skills[id]['name'], damage)
+    crit_chance = self.crit_chance(time)
+    crit_sev = self.character.crit_severity()
+
+    direct_damage = None
+    dot_damage = None
+
+    if 'potency' in skills[id]:
+      potency = (skills[id]['cpotency']
+          if self.combo.would_continue_combo(id) else skills[id]['potency'])
+      damage = self.get_damage(potency, time)
+      direct_damage = Damage(damage, crit_chance, crit_sev)
+    # TODO fracture shouldn't take into account slashing debuff
+    # TODO dot potency should take into account skill speed
+    if 'dotpotency' in skills[id]:
+      damage = self.get_damage(skills[id]['dotpotency'], time)
+      dot_damage = Damage(damage, crit_chance, crit_sev)
+
     self.apply_skill(id, time)
-    return damage
+    return direct_damage, dot_damage
 
-  def get_damage(self, id, time):
-    if not 'potency' in skills[id]:
-      return 0
-    potency = (skills[id]['cpotency']
-        if self.combo.would_continue_combo(id) else skills[id]['potency'])
-
+  def get_damage(self, potency, time):
     damage = self.character.potency_to_damage(potency)
     if self.status.has_effect(Skill.MAIM, time):
       damage *= 1.2
@@ -381,20 +407,7 @@ class WarriorState(object):
     if self.status.has_effect(Skill.HYPERCHARGE, time):
       damage *= 1.1
 
-    # crit chance
-    crit_chance = self.character.crit_chance()
-    if self.status.has_effect(Skill.INTERNAL_RELEASE, time):
-      crit_chance += 0.1
-    if self.status.has_effect(Skill.DELIVERANCE, time):
-      crit_chance += 0.02 * self.stacks
-    if self.status.has_effect(Skill.BATTLE_LITANY, time):
-      crit_chance += 0.15
-
-    crit_sev = self.character.crit_severity()
-
-    # average in crit damage
-    final = crit_chance * damage * crit_sev + (1 - crit_chance) * damage
-    return final
+    return damage
 
   def apply_skill(self, id, time):
     if skills[id]['gcd']:
@@ -407,8 +420,8 @@ class WarriorState(object):
       if id != Skill.HEAVY_SWING:
         self.stacks += 1
 
-      if 'eduration' in skills[id]:
-        self.status.add_effect(id, time, skills[id]['eduration'])
+      if 'duration' in skills[id]:
+        self.status.add_effect(id, time, skills[id]['duration'])
     else:
       if id in [Skill.RAW_INTUITION, Skill.VENGEANCE, Skill.BERSERK]:
         self.stacks += 1
@@ -424,8 +437,8 @@ class WarriorState(object):
           else:
             self.status.remove_effect(Skill.DELIVERANCE)
           self.status.add_effect(id, time, None)
-      elif 'eduration' in skills[id]:
-        self.status.add_effect(id, time, skills[id]['eduration'])
+      elif 'duration' in skills[id]:
+        self.status.add_effect(id, time, skills[id]['duration'])
     self.stacks = min(self.stacks, 5)
 
 
@@ -442,8 +455,26 @@ class PotencyCalculator(object):
       id = action.id
       time = action.time
 
-      # TODO: add dot damage here too? Or at the end??
-      damage += state.apply_skill_and_get_damage(id, time)
+      direct, dot = state.apply_skill_and_get_damage(id, time)
+      if direct:
+        avg = (direct.damage * direct.crit_chance * direct.crit_sev +
+               (1 - direct.crit_chance) * direct.damage)
+        damage += avg
+        print "damage: %s: %d" % (skills[id]['name'], avg)
+      if dot:
+        assert('duration' in skills[id])
+        duration = skills[id]['duration']
+        assert(math.floor(duration) == duration)
+        assert(duration % 3 == 0)
+        ticks = duration / 3
+
+        # TODO dot damage should tick over time
+        per_tick_avg = (dot.damage * dot.crit_chance * dot.crit_sev +
+                        (1 - dot.crit_chance) * dot.damage)
+        avg = per_tick_avg * ticks
+        damage += avg
+        print "damage: %s: %d (dot)" % (skills[id]['name'], avg)
+
     return damage
 
 
@@ -458,6 +489,7 @@ def main():
     Action(Skill.HEAVY_SWING, 7.5),
     Action(Skill.SKULL_SUNDER, 10.0),
     Action(Skill.BUTCHERS_BLOCK, 12.5),
+    Action(Skill.FRACTURE, 15),
   ]
 
   x = PotencyCalculator(timeline, character)
