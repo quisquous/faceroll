@@ -24,6 +24,9 @@ class Skill(object):
   TOMAHAWK = 20
   VENGEANCE = 21
   SUPRAMAX_POTION_OF_STRENGTH_HQ = 30
+  TRICK_ATTACK = 31
+  HYPERCHARGE = 32
+  BATTLE_LITANY = 33
 
 
 skill_list = [
@@ -111,6 +114,7 @@ skill_list = [
     'name': 'Berserk',
     'xivdb': ['action', 38],
     'gcd': 0,
+    'eduration': 20,
   },
   {
     'id': Skill.INFURIATE,
@@ -129,6 +133,7 @@ skill_list = [
     'name': 'Internal Release',
     'xivdb': ['action', 59],
     'gcd': 0,
+    'eduration': 15,
   },
   {
     'id': Skill.INNER_BEAST,
@@ -184,21 +189,59 @@ skill_list = [
     'xivdb': ['item', 16716],
     'gcd': 0,
   },
+  {
+    'id': Skill.TRICK_ATTACK,
+    'name': 'Trick Attack',
+    'xivdb': ['action', 2258],
+    'gcd': 0,
+    'eduration': 10,
+  },
+  {
+    # TODO This isn't really a skill.
+    'id': Skill.HYPERCHARGE,
+    'name': 'Hypercharge',
+    'xivdb': ['action', 2885],
+    'gcd': 0,
+    'eduration': 20,
+  },
+  {
+    'id': Skill.BATTLE_LITANY,
+    'name': 'Battle Litany',
+    'xivdb': ['action', 3557],
+    'gcd': 0,
+    'eduration': 20,
+  },
 ]
 
 skills = dict((x['id'], x) for x in skill_list)
 
+
 Action = collections.namedtuple('Action', 'id time')
 
-timeline = [
-  Action(Skill.DELIVERANCE, -10),
-  Action(1, 0.0),
-  Action(2, 2.5),
-  Action(3, 5.0),
-  Action(1, 7.5),
-  Action(5, 10.0),
-  Action(6, 12.5),
-]
+
+# From http://www.eonet.ne.jp/~versatile/ku-so/ff14dps.html
+# From https://dervyxiv.wordpress.com/damage-formulae-other-mechanics/
+class Character(object):
+  def __init__(self, weapon_damage, attack_power, determination, crit):
+    self.weapon_damage = weapon_damage
+    self.attack_power = attack_power
+    self.determination = determination
+    self.crit = crit
+    # TODO hardcoded for warrior oops
+    self.job_modifier = 20.9
+
+  def potency_to_damage(self, potency):
+    # TODO this will need to be refigured to include potions
+    wep = (self.job_modifier + self.weapon_damage) * 0.00458
+    det = (self.determination - 218) * 0.000137 + 1
+    return wep * det * self.attack_power * potency / 100
+
+  def crit_chance(self):
+    return (self.crit - 354.0) / (858.0 * 5.0) + 0.05
+
+  def crit_severity(self):
+    return (self.crit - 354.0) / (858.0 * 5.0) + 1.45
+
 
 # Track currently active effects.
 # TODO probably need one of these per target (and self)
@@ -216,7 +259,8 @@ class StatusEffects(object):
       self._effects[id] = time + dur
 
   def remove_effect(self, id):
-    self._effects.pop(id)
+    if id in self._effects:
+      self._effects.pop(id)
 
   def has_effect(self, id, time):
     if not id in self._effects:
@@ -283,28 +327,29 @@ class WarriorState(object):
     Skill.INNER_BEAST,
     Skill.STEEL_CYCLONE
   ]
+  ignores_defiance = stack_users
+  warrior_combos = [
+    [ Skill.HEAVY_SWING, Skill.MAIM, Skill.STORMS_EYE ],
+    [ Skill.HEAVY_SWING, Skill.MAIM, Skill.STORMS_PATH ],
+    [ Skill.HEAVY_SWING, Skill.SKULL_SUNDER, Skill.BUTCHERS_BLOCK ],
+  ]
+  warrior_combo_ignore = [
+    Skill.INNER_BEAST,
+    Skill.STEEL_CYCLONE,
+    Skill.FELL_CLEAVE,
+    Skill.DECIMATE,
+  ]
 
-
-  def __init__(self):
+  def __init__(self, character):
+    self.character = character
     self.stacks = 0
     self.status = StatusEffects()
 
-    warrior_combos = [
-      [ Skill.HEAVY_SWING, Skill.MAIM, Skill.STORMS_EYE ],
-      [ Skill.HEAVY_SWING, Skill.MAIM, Skill.STORMS_PATH ],
-      [ Skill.HEAVY_SWING, Skill.SKULL_SUNDER, Skill.BUTCHERS_BLOCK ],
-    ]
-    warrior_combo_ignore = [
-      Skill.INNER_BEAST,
-      Skill.STEEL_CYCLONE,
-      Skill.FELL_CLEAVE,
-      Skill.DECIMATE,
-    ]
-    self.combo = ComboTracker(warrior_combos, warrior_combo_ignore)
+    self.combo = ComboTracker(self.warrior_combos, self.warrior_combo_ignore)
 
   def apply_skill_and_get_damage(self, id, time):
     damage = self.get_damage(id, time)
-    print "damage: %s: %.1f" % (skills[id]['name'], damage)
+    print "damage: %s: %d" % (skills[id]['name'], damage)
     self.apply_skill(id, time)
     return damage
 
@@ -314,27 +359,38 @@ class WarriorState(object):
     potency = (skills[id]['cpotency']
         if self.combo.would_continue_combo(id) else skills[id]['potency'])
 
-    # TODO Not convinced that "damage" and "attack power" mean different
-    # things here. http://www.eonet.ne.jp/~versatile/ku-so/ff14dps.html
-    # suggests that they are equivalent in terms of final damage.
+    damage = self.character.potency_to_damage(potency)
+    if self.status.has_effect(Skill.MAIM, time):
+      damage *= 1.2
+    if self.status.has_effect(Skill.BERSERK, time):
+      damage *= 1.5
+    if self.status.has_effect(Skill.DELIVERANCE, time):
+      damage *= 1.05
+    elif self.status.has_effect(Skill.DEFIANCE, time):
+      if not self.status.has_effect(Skill.UNCHAINED, time):
+        if id not in ignores_defiance:
+          damage *= 0.75
 
-    # damage by 20%
-    maim_mult = 1.2 if self.status.has_effect(Skill.MAIM, time) else 1
-    # attack power by 50%
-    berserk_mult = 1.5 if self.status.has_effect(Skill.BERSERK, time) else 1
-
-    # TODO this is probably not right either
-    damage = potency * maim_mult * berserk_mult
+    # TODO really should be on the mob and not on self.status
+    # TODO 10% slashing resistance != 10% damage increase but nobody seems
+    # to have a good formula for this.  Sad trombone noise.
+    if self.status.has_effect(Skill.STORMS_EYE, time):
+      damage *= 1.1
+    if self.status.has_effect(Skill.TRICK_ATTACK, time):
+      damage *= 1.1
+    if self.status.has_effect(Skill.HYPERCHARGE, time):
+      damage *= 1.1
 
     # crit chance
-    crit_chance = 0.05
+    crit_chance = self.character.crit_chance()
     if self.status.has_effect(Skill.INTERNAL_RELEASE, time):
       crit_chance += 0.1
     if self.status.has_effect(Skill.DELIVERANCE, time):
       crit_chance += 0.02 * self.stacks
+    if self.status.has_effect(Skill.BATTLE_LITANY, time):
+      crit_chance += 0.15
 
-    # TODO make this scale with character stats
-    crit_sev = 1.5
+    crit_sev = self.character.crit_severity()
 
     # average in crit damage
     final = crit_chance * damage * crit_sev + (1 - crit_chance) * damage
@@ -351,35 +407,35 @@ class WarriorState(object):
       if id != Skill.HEAVY_SWING:
         self.stacks += 1
 
-      if id == Skill.MAIM:
-        self.status.add_effect(Skill.MAIM, time,
-            skills[Skill.MAIM]['eduration'])
-      if id == Skill.STORMS_EYE:
-        self.status.add_effect(Skill.MAIM, time,
-            skills[Skill.STORMS_EYE]['eduration'])
-      if id == Skill.STORMS_PATH:
-        self.status.add_effect(Skill.MAIM, time,
-            skills[Skill.STORMS_PATH]['eduration'])
+      if 'eduration' in skills[id]:
+        self.status.add_effect(id, time, skills[id]['eduration'])
     else:
       if id in [Skill.RAW_INTUITION, Skill.VENGEANCE, Skill.BERSERK]:
         self.stacks += 1
       elif id == Skill.INFURIATE:
         self.stacks = 5
-      self.stacks = min(self.stacks, 5)
 
       if id in [Skill.DELIVERANCE, Skill.DEFIANCE]:
         if self.status.has_effect(id, time):
           self.status.remove_effect(id)
         else:
+          if id == Skill.DELIVERANCE:
+            self.status.remove_effect(Skill.DEFIANCE)
+          else:
+            self.status.remove_effect(Skill.DELIVERANCE)
           self.status.add_effect(id, time, None)
+      elif 'eduration' in skills[id]:
+        self.status.add_effect(id, time, skills[id]['eduration'])
+    self.stacks = min(self.stacks, 5)
 
 
 class PotencyCalculator(object):
-  def __init__(self, timeline):
+  def __init__(self, timeline, character):
     self.timeline = timeline
+    self.character = character
 
   def calculate(self):
-    state = WarriorState()
+    state = WarriorState(self.character)
     damage = 0
     for action in self.timeline:
       # TODO: need to account for animation delay
@@ -392,7 +448,19 @@ class PotencyCalculator(object):
 
 
 def main():
-  x = PotencyCalculator(timeline)
+  character = Character(85, 1590, 682, 1193)
+
+  timeline = [
+    Action(Skill.DELIVERANCE, -10),
+    Action(Skill.HEAVY_SWING, 0.0),
+    Action(Skill.MAIM, 2.5),
+    Action(Skill.STORMS_EYE, 5.0),
+    Action(Skill.HEAVY_SWING, 7.5),
+    Action(Skill.SKULL_SUNDER, 10.0),
+    Action(Skill.BUTCHERS_BLOCK, 12.5),
+  ]
+
+  x = PotencyCalculator(timeline, character)
   print 'damage: %d' % x.calculate()
 
 if __name__ == '__main__':
