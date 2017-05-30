@@ -243,6 +243,9 @@ class Character(object):
   def crit_severity(self):
     return (self.crit - 354.0) / (858.0 * 5.0) + 1.45
 
+  def gcd_time(self):
+    # TODO calculate this from ss for reals
+    return 2.5
 
 # Track currently active effects.
 # TODO probably need one of these per target (and self)
@@ -270,6 +273,14 @@ class StatusEffects(object):
     if end_time is None:
       return True
     return time <= end_time
+
+  def time_remaining(self, id, time):
+    if not id in self._effects:
+      return 0
+    end_time = self._effects[id]
+    if end_time is None:
+      return 1000000 # "infinity"
+    return end_time - time
 
 
 # Combo tracker is a graph where every transition goes to the state
@@ -428,14 +439,15 @@ class WarriorState(object):
       if id in self.stack_users:
         self.stacks = 0
       is_combo = self.combo.apply_skill(id)
+
+      if 'duration' in skills[id]:
+        self.status.add_effect(id, time, skills[id]['duration'])
+
       if not is_combo:
         return
 
       if id != Skill.HEAVY_SWING:
         self.stacks += 1
-
-      if 'duration' in skills[id]:
-        self.status.add_effect(id, time, skills[id]['duration'])
     else:
       if id in [Skill.RAW_INTUITION, Skill.VENGEANCE, Skill.BERSERK]:
         self.stacks += 1
@@ -457,10 +469,8 @@ class WarriorState(object):
 
 
 class PotencyCalculator(object):
-  def __init__(self, timeline, character, end_time):
-    self.timeline = timeline
-    self.character = character
-    self.end_time = end_time
+  def __init__(self, state):
+    self.state = state
     self.damage = 0
 
   @staticmethod
@@ -487,40 +497,76 @@ class PotencyCalculator(object):
       print "damage: %s: %d" % (skills[direct.id]['name'], avg)
       self.damage += avg
 
-  def calculate(self):
-    state = WarriorState(self.character)
-    damage = 0
-    for action in self.timeline:
-      # TODO: need to account for animation delay
-      id = action.id
-      time = action.time
-
-      direct, dots = state.apply_skill_and_get_damage(id, time)
-      self.process_damage(direct, dots)
-
-    direct, dots = state.finish_fight(self.end_time)
+  def handle(self, id, time):
+    direct, dots = self.state.apply_skill_and_get_damage(id, time)
     self.process_damage(direct, dots)
 
-    return self.damage
+  def finish_fight(self, time):
+    direct, dots = self.state.finish_fight(time)
+    self.process_damage(direct, dots)
+
+
+class WarriorHeuristic(object):
+  def __init__(self, character, state, start_time):
+    self.character = character
+    self.state = state
+    self.status = state.status
+    self.next_gcd = start_time
+    self.combo = []
+
+  def next_action(self):
+    time = self.next_gcd
+    self.next_gcd += self.character.gcd_time()
+
+    storms_eye_combo = [ Skill.STORMS_EYE, Skill.MAIM, Skill.HEAVY_SWING ]
+    bb_combo = [ Skill.BUTCHERS_BLOCK, Skill.SKULL_SUNDER, Skill.HEAVY_SWING ]
+
+    maim_gcds = self.status.time_remaining(Skill.MAIM, time) / self.character.gcd_time()
+    eye_gcds = self.status.time_remaining(Skill.STORMS_EYE, time) / self.character.gcd_time()
+
+    # TODO technically need animation time in here too
+    if maim_gcds <= 2:
+      if len(self.combo) == 0 or not Skill.MAIM in self.combo:
+        self.combo = storms_eye_combo
+
+    if len(self.combo):
+      if self.state.stacks == 5:
+        return Action(Skill.FELL_CLEAVE, time)
+      return Action(self.combo.pop(), time)
+
+    if eye_gcds <= 4:
+      self.combo = storms_eye_combo
+      return Action(self.combo.pop(), time)
+
+    # TODO should know how much longer to tick
+    if self.status.time_remaining(Skill.FRACTURE, time) < 1:
+      return Action(Skill.FRACTURE, time)
+
+    # TODO check stack count
+    if eye_gcds <= 4:
+      self.combo = storms_eye_combo
+    else:
+      self.combo = bb_combo
+    return Action(self.combo.pop(), time)
 
 
 def main():
   character = Character(85, 1590, 682, 1193)
+  state = WarriorState(character)
+  heuristic = WarriorHeuristic(character, state, 0)
 
-  timeline = [
-    Action(Skill.DELIVERANCE, -10),
-    Action(Skill.HEAVY_SWING, 0.0),
-    Action(Skill.MAIM, 2.5),
-    Action(Skill.STORMS_EYE, 5.0),
-    Action(Skill.HEAVY_SWING, 7.5),
-    Action(Skill.SKULL_SUNDER, 10.0),
-    Action(Skill.BUTCHERS_BLOCK, 12.5),
-    Action(Skill.FRACTURE, 15),
-    Action(Skill.FRACTURE, 30),
-  ]
+  x = PotencyCalculator(state)
+  x.handle(Skill.DELIVERANCE, -10)
 
-  x = PotencyCalculator(timeline, character, 60)
-  print 'damage: %d' % x.calculate()
+  time = 0
+  while True:
+    n = heuristic.next_action()
+    if n.time > 90:
+      break
+    x.handle(n.id, n.time)
+  x.finish_fight(90)
+
+  print 'damage: %d' % x.damage
 
 if __name__ == '__main__':
   main()
