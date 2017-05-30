@@ -320,7 +320,8 @@ class ComboTracker(object):
     return id in self.graph[self.current_node].trans
 
 
-Damage = collections.namedtuple('Damage', 'damage crit_chance crit_sev')
+Damage = collections.namedtuple('Damage', 'id damage crit_chance crit_sev')
+DotDamage = collections.namedtuple('DotDamage', 'id damage crit_chance crit_sev begin end')
 
 
 class WarriorState(object):
@@ -350,6 +351,7 @@ class WarriorState(object):
     self.status = StatusEffects()
 
     self.combo = ComboTracker(self.warrior_combos, self.warrior_combo_ignore)
+    self.dots = {}
 
   def crit_chance(self, time):
     crit_chance = self.character.crit_chance()
@@ -368,20 +370,33 @@ class WarriorState(object):
     crit_sev = self.character.crit_severity()
 
     direct_damage = None
-    dot_damage = None
+    completed_dots = []
 
     if 'potency' in skills[id]:
       potency = (skills[id]['cpotency']
           if self.combo.would_continue_combo(id) else skills[id]['potency'])
       damage = self.get_damage(potency, time, True)
-      direct_damage = Damage(damage, crit_chance, crit_sev)
+      direct_damage = Damage(id, damage, crit_chance, crit_sev)
     # TODO dot potency should take into account skill speed
     if 'dotpotency' in skills[id]:
       damage = self.get_damage(skills[id]['dotpotency'], time, False)
-      dot_damage = Damage(damage, crit_chance, crit_sev)
+      dot_damage = DotDamage(id, damage, crit_chance, crit_sev, time,
+                             time + skills[id]['duration'])
+      if id in self.dots:
+        # overwriting a dot
+        overwritten = self.dots[id]
+        completed_dots.append(DotDamage(overwritten.id, overwritten.damage, overwritten.crit_chance, overwritten.crit_sev, overwritten.begin, min(time, overwritten.end)))
+      self.dots[id] = dot_damage
 
     self.apply_skill(id, time)
-    return direct_damage, dot_damage
+    return direct_damage, completed_dots
+
+  def finish_fight(self, time):
+    final = []
+    for id in self.dots:
+      dot = self.dots[id]
+      final.append(DotDamage(dot.id, dot.damage, dot.crit_chance, dot.crit_sev, dot.begin, min(time, dot.end)))
+    return None, final
 
   def get_damage(self, potency, time, has_slashing):
     damage = self.character.potency_to_damage(potency)
@@ -442,9 +457,35 @@ class WarriorState(object):
 
 
 class PotencyCalculator(object):
-  def __init__(self, timeline, character):
+  def __init__(self, timeline, character, end_time):
     self.timeline = timeline
     self.character = character
+    self.end_time = end_time
+    self.damage = 0
+
+  @staticmethod
+  def average_direct(direct):
+    avg = (direct.damage * direct.crit_chance * direct.crit_sev +
+           (1 - direct.crit_chance) * direct.damage)
+    return avg
+
+  @staticmethod
+  def average_dot(dot):
+    per_tick_avg = (dot.damage * dot.crit_chance * dot.crit_sev +
+                    (1 - dot.crit_chance) * dot.damage)
+    ticks = (dot.end - dot.begin) / 3
+    return per_tick_avg * ticks
+
+  def process_damage(self, direct, dots):
+    if dots:
+      for dot in dots:
+        avg = PotencyCalculator.average_dot(dot)
+        print "damage: %s: %d (dot)" % (skills[dot.id]['name'], avg)
+        self.damage += avg
+    if direct:
+      avg = PotencyCalculator.average_direct(direct)
+      print "damage: %s: %d" % (skills[direct.id]['name'], avg)
+      self.damage += avg
 
   def calculate(self):
     state = WarriorState(self.character)
@@ -454,27 +495,13 @@ class PotencyCalculator(object):
       id = action.id
       time = action.time
 
-      direct, dot = state.apply_skill_and_get_damage(id, time)
-      if direct:
-        avg = (direct.damage * direct.crit_chance * direct.crit_sev +
-               (1 - direct.crit_chance) * direct.damage)
-        damage += avg
-        print "damage: %s: %d" % (skills[id]['name'], avg)
-      if dot:
-        assert('duration' in skills[id])
-        duration = skills[id]['duration']
-        assert(math.floor(duration) == duration)
-        assert(duration % 3 == 0)
-        ticks = duration / 3
+      direct, dots = state.apply_skill_and_get_damage(id, time)
+      self.process_damage(direct, dots)
 
-        # TODO dot damage should tick over time
-        per_tick_avg = (dot.damage * dot.crit_chance * dot.crit_sev +
-                        (1 - dot.crit_chance) * dot.damage)
-        avg = per_tick_avg * ticks
-        damage += avg
-        print "damage: %s: %d (dot)" % (skills[id]['name'], avg)
+    direct, dots = state.finish_fight(self.end_time)
+    self.process_damage(direct, dots)
 
-    return damage
+    return self.damage
 
 
 def main():
@@ -489,9 +516,10 @@ def main():
     Action(Skill.SKULL_SUNDER, 10.0),
     Action(Skill.BUTCHERS_BLOCK, 12.5),
     Action(Skill.FRACTURE, 15),
+    Action(Skill.FRACTURE, 30),
   ]
 
-  x = PotencyCalculator(timeline, character)
+  x = PotencyCalculator(timeline, character, 60)
   print 'damage: %d' % x.calculate()
 
 if __name__ == '__main__':
