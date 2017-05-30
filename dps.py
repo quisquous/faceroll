@@ -3,7 +3,7 @@ import math
 
 #enum
 class Skill(object):
-  HEAVY_SWING= 1
+  HEAVY_SWING = 1
   MAIM = 2
   STORMS_EYE = 3
   STORMS_PATH = 4
@@ -373,18 +373,17 @@ class WarriorState(object):
     if 'potency' in skills[id]:
       potency = (skills[id]['cpotency']
           if self.combo.would_continue_combo(id) else skills[id]['potency'])
-      damage = self.get_damage(potency, time)
+      damage = self.get_damage(potency, time, True)
       direct_damage = Damage(damage, crit_chance, crit_sev)
-    # TODO fracture shouldn't take into account slashing debuff
     # TODO dot potency should take into account skill speed
     if 'dotpotency' in skills[id]:
-      damage = self.get_damage(skills[id]['dotpotency'], time)
+      damage = self.get_damage(skills[id]['dotpotency'], time, False)
       dot_damage = Damage(damage, crit_chance, crit_sev)
 
     self.apply_skill(id, time)
     return direct_damage, dot_damage
 
-  def get_damage(self, potency, time):
+  def get_damage(self, potency, time, has_slashing):
     damage = self.character.potency_to_damage(potency)
     if self.status.has_effect(Skill.MAIM, time):
       damage *= 1.2
@@ -400,7 +399,7 @@ class WarriorState(object):
     # TODO really should be on the mob and not on self.status
     # TODO 10% slashing resistance != 10% damage increase but nobody seems
     # to have a good formula for this.  Sad trombone noise.
-    if self.status.has_effect(Skill.STORMS_EYE, time):
+    if has_slashing and self.status.has_effect(Skill.STORMS_EYE, time):
       damage *= 1.1
     if self.status.has_effect(Skill.TRICK_ATTACK, time):
       damage *= 1.1
