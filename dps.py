@@ -28,7 +28,14 @@ class Skill(object):
   TRICK_ATTACK = 31
   HYPERCHARGE = 32
   BATTLE_LITANY = 33
-
+  OVERPOWER = 34
+  ONSLAUGHT = 35
+  UPHEAVAL = 36
+  INNER_RELEASE = 37
+  EMBOLDEN = 38
+  CHAIN_STRATAGEM = 39
+  SPREAD_BALANCE = 40
+  BATTLE_VOICE = 41
 
 skill_list = [
   {
@@ -47,6 +54,7 @@ skill_list = [
     'potency': 100,
     'cpotency': 190,
     'duration': 24,
+    'beast': 10,
   },
   {
     'id': Skill.STORMS_EYE,
@@ -55,7 +63,8 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 270,
-    'duration': 20,
+    'duration': 30,
+    'beast': 10,
   },
   {
     'id': Skill.STORMS_PATH,
@@ -64,7 +73,7 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 250,
-    'duration': 20,
+    'beast': 20,
   },
   {
     'id': Skill.SKULL_SUNDER,
@@ -73,6 +82,7 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 200,
+    'beast': 20,
   },
   {
     'id': Skill.BUTCHERS_BLOCK,
@@ -81,6 +91,7 @@ skill_list = [
     'gcd': 1,
     'potency': 100,
     'cpotency': 280,
+    'beast': 10,
   },
   {
     'id': Skill.FRACTURE,
@@ -122,6 +133,7 @@ skill_list = [
     'name': 'Infuriate',
     'xivdb': ['action', 52],
     'gcd': 0,
+    'beast': 50,
   },
   {
     'id': Skill.RAW_INTUITION,
@@ -141,13 +153,15 @@ skill_list = [
     'name': 'Inner Beast',
     'xivdb': ['action', 49],
     'gcd': 1,
-    'potency': 300,
+    'potency': 350,
+    'beast': -50,
   },
   {
     'id': Skill.UNCHAINED,
     'name': 'Unchained',
     'xivdb': ['action', 50],
     'gcd': 0,
+    'beast': -50,
   },
   {
     'id': Skill.STEEL_CYCLONE,
@@ -155,6 +169,7 @@ skill_list = [
     'xivdb': ['action', 51],
     'gcd': 1,
     'potency': 200,
+    'beast': -50,
   },
   {
     'id': Skill.FELL_CLEAVE,
@@ -162,6 +177,7 @@ skill_list = [
     'xivdb': ['action', 51],
     'gcd': 1,
     'potency': 500,
+    'beast': -50,
   },
   {
     'id': Skill.DECIMATE,
@@ -169,6 +185,7 @@ skill_list = [
     'xivdb': ['action', 51],
     'gcd': 1,
     'potency': 280,
+    'beast': -50,
   },
   {
     'id': Skill.TOMAHAWK,
@@ -209,6 +226,59 @@ skill_list = [
     'id': Skill.BATTLE_LITANY,
     'name': 'Battle Litany',
     'xivdb': ['action', 3557],
+    'gcd': 0,
+    'duration': 20,
+  },
+  {
+    'id': Skill.OVERPOWER,
+    'name': 'Overpower',
+    'xivdb': ['action', 2188],
+    'gcd': 1,
+    'potency': 120,
+  },
+  {
+    'id': Skill.ONSLAUGHT,
+    'name': 'Onslaught',
+    'gcd': 0,
+    'potency': 100,
+    'beast': -20,
+  },
+  {
+    'id': Skill.UPHEAVAL,
+    'name': 'Upheaval',
+    'gcd': 0,
+    'potency': 300,
+    'beast': -30,
+  },
+  {
+    'id': Skill.INNER_RELEASE,
+    'name': 'Inner Release',
+    'gcd': 0,
+    'duration': 20,
+    'beast': -20,
+  },
+  {
+    'id': Skill.EMBOLDEN,
+    'name': 'Embolden',
+    'gcd': 0,
+    'duration': 20,
+  },
+  {
+    'id': Skill.CHAIN_STRATAGEM,
+    'name': 'Chain Stratagem',
+    'gcd': 0,
+    'duration': 15,
+  },
+  {
+    'id': Skill.SPREAD_BALANCE,
+    'name': 'Balance (spread)',
+    'gcd': 0,
+    'duration': 30,
+  },
+  {
+    'id': Skill.BATTLE_VOICE,
+    'name': 'Battle Voice',
+    'xivdb': ['action', 118],
     'gcd': 0,
     'duration': 20,
   },
@@ -331,19 +401,18 @@ class ComboTracker(object):
     return id in self.graph[self.current_node].trans
 
 
-Damage = collections.namedtuple('Damage', 'id damage crit_chance crit_sev')
-DotDamage = collections.namedtuple('DotDamage', 'id damage crit_chance crit_sev begin end')
+Damage = collections.namedtuple('Damage', 'id damage crit_chance crit_sev pot mult')
+DotDamage = collections.namedtuple('DotDamage', 'id damage crit_chance crit_sev begin end pot')
 
 
 class WarriorState(object):
-  stack_users = [
+  ignores_defiance = [
     Skill.FELL_CLEAVE,
     Skill.DECIMATE,
     Skill.UNCHAINED,
     Skill.INNER_BEAST,
     Skill.STEEL_CYCLONE
   ]
-  ignores_defiance = stack_users
   warrior_combos = [
     [ Skill.HEAVY_SWING, Skill.MAIM, Skill.STORMS_EYE ],
     [ Skill.HEAVY_SWING, Skill.MAIM, Skill.STORMS_PATH ],
@@ -355,23 +424,31 @@ class WarriorState(object):
     Skill.FELL_CLEAVE,
     Skill.DECIMATE,
   ]
+  infuriate_reducers = warrior_combo_ignore
 
   def __init__(self, character):
     self.character = character
-    self.stacks = 0
+    self.beast = 0
     self.status = StatusEffects()
 
     self.combo = ComboTracker(self.warrior_combos, self.warrior_combo_ignore)
-    self.dots = {}
+
+  def debug_output(self, time):
+    return {
+      'beast': self.beast,
+      'effect_maim': self.status.time_remaining(Skill.MAIM, time),
+      'effect_eye': self.status.time_remaining(Skill.STORMS_EYE, time),
+    }
 
   def crit_chance(self, time):
     crit_chance = self.character.crit_chance()
-    if self.status.has_effect(Skill.INTERNAL_RELEASE, time):
-      crit_chance += 0.1
+    # 10% chance at 100 beast
     if self.status.has_effect(Skill.DELIVERANCE, time):
-      crit_chance += 0.02 * self.stacks
+      crit_chance += 0.001 * self.beast
     if self.status.has_effect(Skill.BATTLE_LITANY, time):
       crit_chance += 0.15
+    if self.status.has_effect(Skill.CHAIN_STRATAGEM, time):
+      crit_chance += 0.2
     return crit_chance
 
   # Returns direct and dot and crit info so that the caller can calculate
@@ -381,91 +458,83 @@ class WarriorState(object):
     crit_sev = self.character.crit_severity()
 
     direct_damage = None
-    completed_dots = []
 
     if 'potency' in skills[id]:
       potency = (skills[id]['cpotency']
           if self.combo.would_continue_combo(id) else skills[id]['potency'])
-      damage = self.get_damage(potency, time, True)
-      direct_damage = Damage(id, damage, crit_chance, crit_sev)
-    # TODO dot potency should take into account skill speed
-    if 'dotpotency' in skills[id]:
-      damage = self.get_damage(skills[id]['dotpotency'], time, False)
-      dot_damage = DotDamage(id, damage, crit_chance, crit_sev, time,
-                             time + skills[id]['duration'])
-      if id in self.dots:
-        # overwriting a dot
-        overwritten = self.dots[id]
-        completed_dots.append(DotDamage(overwritten.id, overwritten.damage, overwritten.crit_chance, overwritten.crit_sev, overwritten.begin, min(time, overwritten.end)))
-      self.dots[id] = dot_damage
+      mult = self.get_multiplier(time)
+      damage = self.character.potency_to_damage(potency * mult)
+      direct_damage = Damage(id, damage, crit_chance, crit_sev, potency, mult)
 
     self.apply_skill(id, time)
-    return direct_damage, completed_dots
+    return direct_damage, []
 
   def finish_fight(self, time):
     final = []
-    for id in self.dots:
-      dot = self.dots[id]
-      final.append(DotDamage(dot.id, dot.damage, dot.crit_chance, dot.crit_sev, dot.begin, min(time, dot.end)))
     return None, final
 
-  def get_damage(self, potency, time, has_slashing):
-    damage = self.character.potency_to_damage(potency)
-    if self.status.has_effect(Skill.MAIM, time):
-      damage *= 1.2
+  def get_multiplier(self, time):
+    mult = 1.0
     if self.status.has_effect(Skill.BERSERK, time):
-      damage *= 1.5
+      mult *= 1.5
+    if self.status.has_effect(Skill.STORMS_EYE, time):
+      mult *= 1.2
     if self.status.has_effect(Skill.DELIVERANCE, time):
-      damage *= 1.05
+      mult *= 1.05
     elif self.status.has_effect(Skill.DEFIANCE, time):
       if not self.status.has_effect(Skill.UNCHAINED, time):
         if id not in ignores_defiance:
-          damage *= 0.75
+          mult *= 0.75
 
     # TODO really should be on the mob and not on self.status
     # TODO 10% slashing resistance != 10% damage increase but nobody seems
     # to have a good formula for this.  Sad trombone noise.
-    if has_slashing and self.status.has_effect(Skill.STORMS_EYE, time):
-      damage *= 1.1
+    # TODO Separate out skills and effects.  For now MAIM=slashing <_<
+    if self.status.has_effect(Skill.MAIM, time):
+      mult *= 1.1
     if self.status.has_effect(Skill.TRICK_ATTACK, time):
-      damage *= 1.1
+      mult *= 1.1
     if self.status.has_effect(Skill.HYPERCHARGE, time):
-      damage *= 1.1
+      mult *= 1.05
+    embolden_time = self.status.time_remaining(Skill.EMBOLDEN, time)
+    if embolden_time > 0:
+      mult *= 1 + 0.02 * math.ceil(embolden_time / 4.0)
 
-    return damage
+    if self.status.has_effect(Skill.SPREAD_BALANCE, time):
+      mult *= 1.1
+    # Battle voice increases "direct hit rate" (affects tanks? probably no?)
+    # Potion affects stats, not a flat mult
+    # Fey wind affects skill speed
+    return mult
 
   def apply_skill(self, id, time):
-    if skills[id]['gcd']:
-      if id in self.stack_users:
-        self.stacks = 0
-      is_combo = self.combo.apply_skill(id)
+    if 'beast' in skills[id]:
+      beast = skills[id]['beast']
+      # inner release halves skills that cost beast gauge
+      if beast < 0:
+        if self.status.has_effect(Skill.INNER_RELEASE, time):
+          beast = math.floor(beast / 2)
+      assert(self.beast + beast >= 0)
+      self.beast = max(min(self.beast + beast, 100), 0)
 
+    if skills[id]['gcd']:
+      is_combo = self.combo.apply_skill(id)
       if 'duration' in skills[id]:
         self.status.add_effect(id, time, skills[id]['duration'])
-
-      if not is_combo:
-        return
-
-      if id != Skill.HEAVY_SWING:
-        self.stacks += 1
     else:
-      if id in [Skill.RAW_INTUITION, Skill.VENGEANCE, Skill.BERSERK]:
-        self.stacks += 1
-      elif id == Skill.INFURIATE:
-        self.stacks = 5
-
       if id in [Skill.DELIVERANCE, Skill.DEFIANCE]:
         if self.status.has_effect(id, time):
           self.status.remove_effect(id)
+          self.beast = 0
         else:
           if id == Skill.DELIVERANCE:
             self.status.remove_effect(Skill.DEFIANCE)
           else:
             self.status.remove_effect(Skill.DELIVERANCE)
           self.status.add_effect(id, time, None)
+          self.beast = math.floor(self.beast / 2)
       elif 'duration' in skills[id]:
         self.status.add_effect(id, time, skills[id]['duration'])
-    self.stacks = min(self.stacks, 5)
 
 
 class PotencyCalculator(object):
@@ -514,6 +583,9 @@ class WarriorHeuristic(object):
     self.next_gcd = start_time
     self.combo = []
 
+  def next_gcd_time(self):
+    return self.next_gcd
+
   def next_action(self):
     time = self.next_gcd
     self.next_gcd += self.character.gcd_time()
@@ -530,7 +602,7 @@ class WarriorHeuristic(object):
         self.combo = storms_eye_combo
 
     if len(self.combo):
-      if self.state.stacks == 5:
+      if self.state.beast >= 90:
         return Action(Skill.FELL_CLEAVE, time)
       return Action(self.combo.pop(), time)
 
@@ -538,17 +610,16 @@ class WarriorHeuristic(object):
       self.combo = storms_eye_combo
       return Action(self.combo.pop(), time)
 
-    # TODO should know how much longer to tick
-    if self.status.time_remaining(Skill.FRACTURE, time) < 1:
-      return Action(Skill.FRACTURE, time)
-
-    # TODO check stack count
     if eye_gcds <= 4:
       self.combo = storms_eye_combo
     else:
       self.combo = bb_combo
     return Action(self.combo.pop(), time)
 
+#embolden 16s
+#trick attack 11s
+#litany 5s?? A
+#chain strategem 15s
 
 def main():
   character = Character(85, 1590, 682, 1193)
@@ -558,12 +629,17 @@ def main():
   x = PotencyCalculator(state)
   x.handle(Skill.DELIVERANCE, -10)
 
-  time = 0
   while True:
     n = heuristic.next_action()
     if n.time > 90:
       break
     x.handle(n.id, n.time)
+
+    debug = state.debug_output(n.time)
+    debug['skill'] = skills[n.id]['name']
+    debug['time'] = n.time
+
+    print debug
   x.finish_fight(90)
 
   print 'damage: %d' % x.damage
