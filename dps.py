@@ -433,13 +433,6 @@ class WarriorState(object):
 
     self.combo = ComboTracker(self.warrior_combos, self.warrior_combo_ignore)
 
-  def debug_output(self, time):
-    return {
-      'beast': self.beast,
-      'effect_maim': self.status.time_remaining(Skill.MAIM, time),
-      'effect_eye': self.status.time_remaining(Skill.STORMS_EYE, time),
-    }
-
   def crit_chance(self, time):
     crit_chance = self.character.crit_chance()
     # 10% chance at 100 beast
@@ -569,6 +562,7 @@ class PotencyCalculator(object):
   def handle(self, id, time):
     direct, dots = self.state.apply_skill_and_get_damage(id, time)
     self.process_damage(direct, dots)
+    return direct
 
   def finish_fight(self, time):
     direct, dots = self.state.finish_fight(time)
@@ -633,11 +627,21 @@ def main():
     n = heuristic.next_action()
     if n.time > 90:
       break
-    x.handle(n.id, n.time)
 
-    debug = state.debug_output(n.time)
+    mult = state.get_multiplier(n.time)
+    damage = x.handle(n.id, n.time)
+
+    debug = {}
+    debug['beast'] = state.beast
+    debug['effect_maim'] = state.status.time_remaining(Skill.MAIM, n.time)
+    debug['effect_eye'] = state.status.time_remaining(Skill.STORMS_EYE, n.time)
     debug['skill'] = skills[n.id]['name']
     debug['time'] = n.time
+    debug['damage'] = PotencyCalculator.average_direct(damage)
+    debug['potency'] = damage.pot
+    debug['mult'] = mult
+    debug['crit_chance'] = damage.crit_chance
+    debug['crit_chance'] = damage.crit_sev
 
     print debug
   x.finish_fight(90)
