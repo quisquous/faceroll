@@ -248,7 +248,7 @@ skill_list = [
     'name': 'Upheaval',
     'gcd': 0,
     'potency': 300,
-    'beast': -30,
+    'beast': -20,
   },
   {
     'id': Skill.INNER_RELEASE,
@@ -552,11 +552,9 @@ class PotencyCalculator(object):
     if dots:
       for dot in dots:
         avg = PotencyCalculator.average_dot(dot)
-        print "damage: %s: %d (dot)" % (skills[dot.id]['name'], avg)
         self.damage += avg
     if direct:
       avg = PotencyCalculator.average_direct(direct)
-      print "damage: %s: %d" % (skills[direct.id]['name'], avg)
       self.damage += avg
 
   def handle(self, id, time):
@@ -569,84 +567,200 @@ class PotencyCalculator(object):
     self.process_damage(direct, dots)
 
 
-class WarriorHeuristic(object):
-  def __init__(self, character, state, start_time):
-    self.character = character
-    self.state = state
-    self.status = state.status
-    self.next_gcd = start_time
-    self.combo = []
-
-  def next_gcd_time(self):
-    return self.next_gcd
-
-  def next_action(self):
-    time = self.next_gcd
-    self.next_gcd += self.character.gcd_time()
-
-    storms_eye_combo = [ Skill.STORMS_EYE, Skill.MAIM, Skill.HEAVY_SWING ]
-    bb_combo = [ Skill.BUTCHERS_BLOCK, Skill.SKULL_SUNDER, Skill.HEAVY_SWING ]
-
-    maim_gcds = self.status.time_remaining(Skill.MAIM, time) / self.character.gcd_time()
-    eye_gcds = self.status.time_remaining(Skill.STORMS_EYE, time) / self.character.gcd_time()
-
-    # TODO technically need animation time in here too
-    if maim_gcds <= 2:
-      if len(self.combo) == 0 or not Skill.MAIM in self.combo:
-        self.combo = storms_eye_combo
-
-    if len(self.combo):
-      if self.state.beast >= 90:
-        return Action(Skill.FELL_CLEAVE, time)
-      return Action(self.combo.pop(), time)
-
-    if eye_gcds <= 4:
-      self.combo = storms_eye_combo
-      return Action(self.combo.pop(), time)
-
-    if eye_gcds <= 4:
-      self.combo = storms_eye_combo
-    else:
-      self.combo = bb_combo
-    return Action(self.combo.pop(), time)
-
 #embolden 16s
 #trick attack 11s
 #litany 5s?? A
 #chain strategem 15s
 
+six_cleave_opener = [
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Inner Release",
+  "Berserk",
+  "Fell Cleave",
+  "Upheaval",
+  "Infuriate",
+  "Fell Cleave",
+  "Maim",
+  "Storm's Path",
+  "Fell Cleave",
+  "Fell Cleave",
+  "Fell Cleave",
+  "Fell Cleave",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Heavy Swing",
+  "Infuriate",
+  "Upheaval",
+  "Maim",
+  "Fell Cleave",
+  "Storm's Path",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Onslaught",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Berserk",
+  "Fell Cleave",
+  "Maim",
+  "Upheaval",
+  "Storm's Path",
+  "Fell Cleave",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Infuriate",
+  "Fell Cleave",
+  "Heavy Swing",
+  "Maim",
+  "Fell Cleave",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Maim",
+  "Onslaught",
+  "Storm's Path",
+  "Heavy Swing",
+  "Upheaval",
+  "Maim",
+  "Storm's Path",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Inner Release",
+  "Berserk",
+  "Fell Cleave",
+  "Upheaval",
+  "Infuriate",
+  "Fell Cleave",
+  "Maim",
+  "Storm's Path",
+  "Fell Cleave",
+  "Fell Cleave",
+  "Fell Cleave",
+  "Fell Cleave",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Eye",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Fell Cleave",
+  "Infuriate",
+  "Upheaval",
+  "Heavy Swing",
+  "Maim",
+  "Storm's Path",
+  "Heavy Swing",
+]
+
+def string_to_skill(string):
+  lower = string.lower()
+  results = [s['id'] for s in skill_list if lower in s['name'].lower()]
+  if len(results) == 1:
+    return results[0]
+  return None
+
 def main():
   character = Character(85, 1590, 682, 1193)
   state = WarriorState(character)
-  heuristic = WarriorHeuristic(character, state, 0)
 
-  x = PotencyCalculator(state)
-  x.handle(Skill.DELIVERANCE, -10)
+  calc = PotencyCalculator(state)
+  calc.handle(Skill.DELIVERANCE, -10)
 
-  while True:
-    n = heuristic.next_action()
-    if n.time > 90:
-      break
+  rotation = [string_to_skill(s) for s in six_cleave_opener]
 
-    mult = state.get_multiplier(n.time)
-    damage = x.handle(n.id, n.time)
+  header = [
+    'time',
+    'gcd',
+    'ogcd',
+    'beast',
+    'damage',
+    'pot',
+    'mult',
+    'crit_rate',
+    'crit_sev',
+  ]
 
-    debug = {}
-    debug['beast'] = state.beast
-    debug['effect_maim'] = state.status.time_remaining(Skill.MAIM, n.time)
-    debug['effect_eye'] = state.status.time_remaining(Skill.STORMS_EYE, n.time)
-    debug['skill'] = skills[n.id]['name']
-    debug['time'] = n.time
-    debug['damage'] = PotencyCalculator.average_direct(damage)
-    debug['potency'] = damage.pot
-    debug['mult'] = mult
-    debug['crit_chance'] = damage.crit_chance
-    debug['crit_chance'] = damage.crit_sev
+  lines = []
+  gcd_time = 2.42
+  animation_time = 0.7
 
-    print debug
-  x.finish_fight(90)
+  time = 0
+  next_gcd = 0
+  next_ogcd = 0
+  for id in rotation:
+    if (skills[id]['gcd']):
+      time = next_gcd
+    else:
+      time = next_ogcd
+    mult = state.get_multiplier(time)
+    damage = calc.handle(id, time)
+    if damage:
+      just_potency = Damage(damage.id, damage.pot * damage.mult,damage.crit_chance,damage.crit_sev,damage.pot,damage.mult)
+    if (skills[id]['gcd']):
+      next_gcd = time + gcd_time
+      next_ogcd = time + animation_time
+    else:
+      next_ogcd = time + animation_time
 
-  print 'damage: %d' % x.damage
+    line = {
+      'time': '%0.2f' % time,
+      'beast': '%d' % state.beast,
+    }
+
+    if (skills[id]['gcd']):
+      line['gcd'] = skills[id]['name']
+    else:
+      line['ogcd'] = skills[id]['name']
+
+    if damage:
+      line['damage'] = '%0.4f' % PotencyCalculator.average_direct(just_potency)
+      line['pot'] = '%d' % damage.pot
+      line['mult'] = '%0.4f' % mult
+      line['crit_rate'] = '%0.4f' % damage.crit_chance
+      line['crit_sev'] = '%0.4f' % damage.crit_sev
+
+    lines.append(line)
+
+  calc.finish_fight(next_gcd)
+
+  print ','.join(header)
+  for linemap in lines:
+    line = []
+    for entry in header:
+      if entry in linemap:
+        line.append(linemap[entry])
+      else:
+        line.append('')
+    print ','.join(line)
 
 if __name__ == '__main__':
   main()
